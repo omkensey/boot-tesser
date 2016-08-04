@@ -63,12 +63,24 @@ $ aws ec2 describe-instances --region us-west-2 --instance-ids <INSTANCE_ID> --q
 
 ## Host prep and install
 
-1. Copy the `prep-non-coreos-master.sh` script to the target host.  Execute it there, using an account that can sudo without a password:
+Copy the `prep-non-coreos-master.sh` script to the target hosts.  Execute it locally on them, using an account that can sudo without a password:
 
-`$ sudo ./prep-non-coreos-master.sh`
+`$ sudo ./prep-non-coreos-node.sh`
 
-2. Run the `init-master.sh` script on your client (laptop, desktop, etc.) with the public IP of the master instance and the IDENT variable set to the appropriate SSH key filename:
+### Master node
 
-`$ IDENT=~/.ssh/google_compute_engine ./init-master.sh <node-public-ip>`
+Run the `init-master.sh` script on your client (laptop, desktop, etc.) with the public IP of the master instance and the IDENT variable set to the appropriate SSH key filename:
+
+`$ IDENT=<path to SSH key file> ./init-master.sh <node-public-ip>`
 
 Eventually you should see a message that bootstrap is complete with instructions on how to access your new master node.
+
+### Worker node(s)
+
+1. Run the `init-worker.sh` script on your client with the public IP of the node intended to be a worker, followed by the path to the previously-generated kubeconfig, and the IDENT variable set to the appropriate SSH key filename:
+
+`$ IDENT=<path to SSH key file> ./init-master.sh <node-public-ip> <path to kubeconfig>` 
+
+Eventually you should see a message that worker bootstrap is complete.  It may take a few seconds to a few minutes for the node to become Ready.
+
+2. Repeat step 1 for each worker node target.

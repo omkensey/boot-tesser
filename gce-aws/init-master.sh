@@ -6,8 +6,10 @@ REMOTE_PORT=${REMOTE_PORT:-22}
 CLUSTER_DIR=${CLUSTER_DIR:-cluster}
 IDENT=${IDENT:-${HOME}/.ssh/id_rsa}
 
-if [ -f /var/coreos/metadata ]; then
-  source /var/coreos/metadata
+COREOS_ENV_FILE=${COREOS_ENV_FILE:-/var/coreos/metadata}
+
+if [ -f $COREOS_ENV_FILE ]; then
+  source $COREOS_ENV_FILE
 fi 
 
 if [ -f /etc/os-release ]; then
@@ -86,9 +88,6 @@ function configure_network() {
 
 # Initialize a Master node
 function init_master_node() {
-    COREOS_ENV_FILE=/var/coreos/metadata
-    source $COREOS_ENV_FILE
-
     systemctl daemon-reload
     if [ "$OS_NAME" = "coreos" ]; then
       systemctl stop update-engine; systemctl mask update-engine
@@ -115,6 +114,10 @@ function init_master_node() {
     mkdir -p /etc/kubernetes
     cp /home/core/assets/auth/kubeconfig /etc/kubernetes/
 
+    # Set up the kubelet service
+
+    sed "s#{{COREOS_ENV_FILE}}#$COREOS_ENV_FILE#" /home/core/kubelet.master > /etc/systemd/system/kubelet.service
+
     # Start the kubelet
     systemctl enable kubelet; systemctl start kubelet
 
@@ -138,7 +141,7 @@ function init_master_node() {
 if [ "${REMOTE_HOST}" != "local" ]; then
     # Set up the kubelet.service on remote host
     scp -i ${IDENT} -P ${REMOTE_PORT} kubelet.master core@${REMOTE_HOST}:/home/core/kubelet.master
-    ssh -t -i ${IDENT} -p ${REMOTE_PORT} core@${REMOTE_HOST} "sudo mv /home/core/kubelet.master /etc/systemd/system/kubelet.service"
+    # ssh -t -i ${IDENT} -p ${REMOTE_PORT} core@${REMOTE_HOST} "sudo mv /home/core/kubelet.master /etc/systemd/system/kubelet.service"
 
     # Copy self to remote host so script can be executed in "local" mode
     scp -i ${IDENT} -P ${REMOTE_PORT} ${BASH_SOURCE[0]} core@${REMOTE_HOST}:/home/core/init-master.sh
