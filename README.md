@@ -83,4 +83,4 @@ Eventually you should see a message that bootstrap is complete with instructions
 
 Eventually you should see a message that worker bootstrap is complete.  It may take a few seconds to a few minutes for the node to become Ready.
 
-#### Repeat step 1 for each worker node target.
+#### Repeat the previous step for each worker node target.
