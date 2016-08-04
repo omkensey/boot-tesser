@@ -4,7 +4,7 @@
 
 # Self-hosted Kubernetes install requires several things:
 
-# * a "core" user with passwordless permissions
+# * a "core" user with passwordless sudo permissions
 # * SSH, port 443 and port 2379 opened on each host
 # * a working rkt install
 # * the CoreOS kubelet-wrapper script placed in /usr/lib/coreos
@@ -168,6 +168,10 @@ esac
 
 if ! $(id core > /dev/null); then
   useradd -m core
+fi
+
+if ! [ -f ~core/.ssh/authorized_keys ]; then
+  cp ~root/.ssh/authorized_keys ~core/.ssh/authorized_keys
 fi
 
 if ! $(sudo -l -U core | grep -q "NOPASSWD: ALL"); then 
