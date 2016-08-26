@@ -2,11 +2,7 @@
 
 ## Intent
 
-The idea is to carry out enough modifications to a non-CoreOS host to 
-allow it to be a base for the CoreOS Kubernetes self-hosted install.  
-This encompasses both a relatively large prep script 
-(`pre-non-coreos-node.sh`) and some small modifications to the install 
-scripts.
+The idea is to carry out enough modifications to a non-CoreOS host to allow it to be a base for the CoreOS Kubernetes self-hosted install.  This encompasses both a relatively large prep script (`prep-non-coreos-node.sh`) and some small modifications to the install scripts.
 
 ## Execution
 
@@ -19,7 +15,7 @@ none of the following will work, so we exit with an error.  If it is
 there, we go ahead and initialize some variables for later use.
 
 Next we identify which systemd-based distribution we're on.  If it's RHEL 
->= 7 or Ubuntu >= 16, we record that and set a few distro-specific 
+7.x or Ubuntu 16.x, we record that and set a few distro-specific 
 variables and config options.  If it's CoreOS, we just exit.  If it's 
 something else, we exit with an error.
 
@@ -146,7 +142,8 @@ private IPs)
 ## Run a demo
 
 There are three demo scripts, and a demo-env.sh file, that will run a 
-full cycle of the quickstart on GCE.  You need gcloud and jq installed.
+full cycle of the quickstart on GCE.  You need `gcloud` and `jq` 
+installed and configured.
 
 * Customize demo-env.sh with the instance names, OS images, etc. that 
 you want.
