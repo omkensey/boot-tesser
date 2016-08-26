@@ -1,10 +1,11 @@
 [Unit]
-Requires=docker.service etcd.service flanneld.service
-After=docker.service etcd.service flanneld.service
+Requires=docker.service etcd2.service flanneld.service
+After=docker.service etcd2.service flanneld.service
 
 [Service]
 Environment=KUBELET_ACI=quay.io/coreos/hyperkube
-Environment=KUBELET_VERSION=v1.3.0_coreos.1
+Environment=KUBELET_VERSION=v1.3.2_coreos.0
+Environment="RKT_OPTS=--volume etc-resolv,kind=host,source=/etc/resolv.conf --mount volume=etc-resolv,target=/etc/resolv.conf"
 EnvironmentFile=/etc/environment
 EnvironmentFile=-{{COREOS_ENV_FILE}}
 

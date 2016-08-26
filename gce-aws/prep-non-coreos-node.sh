@@ -4,26 +4,38 @@
 
 # Self-hosted Kubernetes install requires several things:
 
-# * a "core" user with passwordless sudo permissions
+# * systemd, etcd, flannel, docker and rkt
 # * SSH, port 443 and port 2379 opened on each host
-# * a working rkt install
+# * a user named "core" with passwordless sudo permissions
 # * the CoreOS kubelet-wrapper script placed in /usr/lib/coreos
 
-# In addition you will need most MAC set to permissive mode or disabled 
-# to allow rkt to run pods, and if you plan to use Docker containers in 
-# Kubernetes, you will need a working Docker installation.  This script 
+# In addition you will need SELinux, if it's in use, set to 
+# permissive mode or disabled to allow rkt to run pods.  This script 
 # will automate these changes.
 
 # This script should be run as root or using sudo.
 
 # If systemd isn't there, die immediately
 
-if ! $(basename $(readlink -f /sbin/init) > /dev/null); then
+if ! $(systemd-analyze 2>&1 > /dev/null); then
   echo "Kubernetes self-hosted install is only supported with systemd."
   exit 1
 fi
 
-# Are we on RHEL 7, Ubuntu 16 or something unsupported?
+# Set some variables to default values
+
+MANUAL_FLANNEL=0
+
+LNPATH="/usr/bin/ln"
+
+CLEANUP_LIST=""
+
+COREOS_ENV_FILE=${COREOS_ENV_FILE:-/var/coreos/metadata}
+COREOS_ENV_DIR=$(dirname $COREOS_ENV_FILE)
+BOOTKUBE_ENV_FILE=${BOOTKUBE_ENV_FILE:-${COREOS_ENV_DIR}/metadata-bootkube.conf}
+
+
+# Are we on RHEL 7, Ubuntu 16, CoreOS or something unsupported?
 
 if [ -f /etc/os-release ]; then
   source <(cat /etc/os-release)
@@ -42,7 +54,13 @@ case $OS_NAME in
     else
       PKG_INSTALL="yum install"
       PKG_LIST="docker etcd flannel https://dl.fedoraproject.org/pub/epel/7/x86_64/j/jq-1.5-1.el7.x86_64.rpm https://dl.fedoraproject.org/pub/epel/7/x86_64/o/oniguruma-5.9.5-3.el7.x86_64.rpm"
-      rpm --import http://download.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-7 
+      rpm --import http://download.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-7
+      # Persistently set SELinux to non-enforcing
+      # TODO: do we need to turn AppArmor off on Ubuntu?
+      setenforce 0
+      if [ -f /etc/sysconfig/selinux ] && $(grep -q "SELINUX=enforcing" /etc/sysconfig/selinux); then
+        sed -i.bak -e 's/SELINUX=enforcing/SELINUX=permissive/' /etc/sysconfig/selinux
+      fi
     fi
     ;;
   ubuntu)
@@ -53,7 +71,13 @@ case $OS_NAME in
       PKG_INSTALL="apt-get install"
       PKG_LIST="docker.io etcd jq"
       MANUAL_FLANNEL="1"
+      LNPATH="/bin/ln"
     fi
+    ;;
+  coreos)
+    echo "You don't need to run this script against a version of CoreOS that's "
+    echo "supported for self-install."
+    exit 0
     ;;
   *)
     echo "Your distribution is not supported for Kubernetes self-hosted install."
@@ -61,45 +85,57 @@ case $OS_NAME in
     ;;
 esac
 
-# Pull the metadata from GCE or AWS if we're not on CoreOS
+# Pull the metadata from GCE or AWS
 
-if [ $OS_NAME = "rhel" ] || [ $OS_NAME = "ubuntu" ]; then
-  if [ $(curl -ss --connect-timeout 1 -f -H "Metadata-Flavor: Google" "http://169.254.169.254/computeMetadata/v1/instance/id") ]; then
-    COREOS_OEM="gce"
-  elif [ $(curl -ss --connect-timeout 1 -f http://169.254.169.254/latest/meta-data/ami-id) ]; then
-    COREOS_OEM="ec2"
-  else
-    echo "Your cloud provider, if any, is not (yet) supported by this script."
-    exit 1
-  fi
-
-  case $COREOS_OEM in
-    gce)
-      COREOS_PUBLIC_IPV4=$(curl -ss -H 'Metadata-Flavor: Google' http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip)
-      COREOS_PRIVATE_IPV4=$(curl -ss -H 'Metadata-Flavor: Google' http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/ip)
-      ;;
-    ec2)    
-      COREOS_PUBLIC_IPV4=$(curl -ss http://169.254.169.254/latest/meta-data/public-ipv4)
-      COREOS_PRIVATE_IPV4=$(curl -ss http://169.254.169.254/latest/meta-data/local-ipv4)
-      ;;
-  esac
+if [ $(curl -ss --connect-timeout 1 -f -H "Metadata-Flavor: Google" "http://169.254.169.254/computeMetadata/v1/instance/id") ]; then
+  COREOS_OEM="gce"
+elif [ $(curl -ss --connect-timeout 1 -f http://169.254.169.254/latest/meta-data/ami-id) ]; then
+  COREOS_OEM="ec2"
+else
+  echo "Your cloud provider, if any, is not (yet) supported by this script."
+  exit 1
 fi
 
-MANUAL_FLANNEL=0
-CLEANUP_LIST=""
-COREOS_ENV_FILE=${COREOS_ENV_FILE:-/var/coreos/metadata}
+case $COREOS_OEM in
+  gce)
+    COREOS_PUBLIC_IPV4=$(curl -ss -H 'Metadata-Flavor: Google' http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip)
+    COREOS_PRIVATE_IPV4=$(curl -ss -H 'Metadata-Flavor: Google' http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/ip)
+    ;;
+  ec2)    
+    COREOS_PUBLIC_IPV4=$(curl -ss http://169.254.169.254/latest/meta-data/public-ipv4)
+    COREOS_PRIVATE_IPV4=$(curl -ss http://169.254.169.254/latest/meta-data/local-ipv4)
+    ;;
+esac
+
+# Write out metadata for the self-install script to use
+
+mkdir -p $COREOS_ENV_DIR
+mkdir -p $(dirname $BOOTKUBE_ENV_FILE)
+echo "COREOS_PUBLIC_IPV4=${COREOS_PUBLIC_IPV4}" > $BOOTKUBE_ENV_FILE
+echo "COREOS_PRIVATE_IPV4=${COREOS_PRIVATE_IPV4}" >> $BOOTKUBE_ENV_FILE
+echo "LNPATH=${LNPATH}" >> $BOOTKUBE_ENV_FILE
+cat $COREOS_ENV_DIR/metadata-*.conf > $COREOS_ENV_FILE
 
 # Install etcd, docker, flannel and jq
 
 $PKG_INSTALL -y $PKG_LIST
+
+# Ubuntu auto-starts etcd on package install.  Why??
+
+if systemctl status etcd > /dev/null; then
+  systemctl stop etcd && systemctl disable etcd
+fi
+
+# Red Hat changes the default flannel network config prefix, so if we 
+# detect that, we change it back to keep cross-distro compatibility
 
 if [ -f /etc/sysconfig/flanneld ]; then
   sed -i.bak -e 's/FLANNEL_ETCD_KEY=\"\/atomic.io\/network\"/FLANNEL_ETCD_KEY=\"\/coreos.com\/network\"/' /etc/sysconfig/flanneld
 fi
 
 if [ "$MANUAL_FLANNEL" -eq "1" ]; then
-  # We have to do a special process for Ubuntu because there are no 
-  # flannel .debs we trust out there
+  # We have to do a tarball flannel install for Ubuntu because there are 
+  # no flannel .debs we trust out there
   FLANNEL_VER="0.5.5"
   FLANNEL_RELEASE_URL="https://github.com/coreos/flannel/releases/download/v${FLANNEL_VER}/flannel-${FLANNEL_VER}-linux-amd64.tar.gz"
   FLANNEL_UNIT="[Unit]
@@ -123,23 +159,13 @@ WantedBy=multi-user.target"
   curl -ss -L $FLANNEL_RELEASE_URL > flannel-${FLANNEL_VER}-linux-amd64.tar.gz
   tar zxvf flannel-${FLANNEL_VER}-linux-amd64.tar.gz
   cp flannel-${FLANNEL_VER}/flanneld /usr/local/bin
-  ln -sf /usr/local/bin/flanneld /usr/bin
+  $LNPATH -sf /usr/local/bin/flanneld /usr/bin
   echo "$FLANNEL_UNIT" > /etc/systemd/system/flanneld.service
   CLEANUP_LIST="$CLEANUP_LIST flannel-${FLANNEL_VER}-linux-amd64.tar.gz flannel-${FLANNEL_VER}"
 fi
 
-# If this is RHEL, set SELinux to non-enforcing
-# TODO: do we need to turn AppArmor off on Ubuntu?
-
-if [ "$OS_NAME" = "rhel" ]; then 
-  setenforce 0
-  if [ -f /etc/sysconfig/selinux ] && $(grep -q "SELINUX=enforcing" /etc/sysconfig/selinux); then
-    sed -i.bak -e 's/SELINUX=enforcing/SELINUX=permissive/' /etc/sysconfig/selinux
-  fi
-fi
-
-# To make the required host firewall changes, assuming your firewall 
-# allows SSH through already, you will do something like one of the below:
+# Make the required host firewall changes.  We assume SSH is allowed by 
+# default.
 
 OS_FIREWALL="iptables" # fallback if we don't detect anything else
 
@@ -160,32 +186,36 @@ case $OS_FIREWALL in
     ;;
   *)
     if ! $(iptables -L INPUT -n | grep ACCEPT | grep -q 443); then
+      # We want to insert the iptables rule after the last ACCEPT rule 
+      # -- this should work for most rule sets, and if not, the user 
+      # will need to modify this script to suit.
       IPTABLES_ACCEPT_LINE=$(( $(iptables -L INPUT -n --line-numbers | grep ACCEPT | tail -n 1 | cut -d" " -f1) + 1 ))
       iptables -I INPUT $IPTABLES_ACCEPT_LINE -m comment --comment 'Added by Kubernetes self-hosted install' -p tcp -m multiport --dports 443,2379 -j ACCEPT
     fi
     ;;
 esac
 
+# Some basic user setup:
+
+# If the core user doesn't exist, create it.
+
 if ! $(id core > /dev/null); then
   useradd -m core
 fi
 
+# If the core user has no SSH authorized_keys, copy root's if it exists
+
 if ! [ -f ~core/.ssh/authorized_keys ]; then
-  cp ~root/.ssh/authorized_keys ~core/.ssh/authorized_keys
+  if [ -f ~root/.ssh/authorized_keys ]; then
+    cp ~root/.ssh/authorized_keys ~core/.ssh/authorized_keys
+  fi
 fi
+
+# If the core user doesn't have passwordless sudo, add that.
 
 if ! $(sudo -l -U core | grep -q "NOPASSWD: ALL"); then 
   echo "core ALL=NOPASSWD: ALL" >> /etc/sudoers.d/core
 fi
-
-# Write out the metadata for the install script to use
-
-mkdir -p $(dirname $COREOS_ENV_FILE)
-echo "" > $COREOS_ENV_FILE
-echo "COREOS_PUBLIC_IPV4=${COREOS_PUBLIC_IPV4}" >> $COREOS_ENV_FILE
-echo "COREOS_PRIVATE_IPV4=${COREOS_PRIVATE_IPV4}" >> $COREOS_ENV_FILE
-
-# Adjust any paths, etc. below as needed to suit your installation.
 
 # Install rkt
 
@@ -196,7 +226,7 @@ export RKT_RELEASE_URL="https://github.com/coreos/rkt/releases/download/${RKT_VE
 
 groupadd rkt
 groupadd rkt-admin
-usermod -a -G rkt $RKT_USER
+usermod -a -G rkt,rkt-admin $RKT_USER
 curl -ss -L $RKT_RELEASE_URL > rkt-${RKT_VER}.tar.gz
 tar zxvf rkt-${RKT_VER}.tar.gz
 cp rkt-${RKT_VER}/rkt /usr/local/bin/rkt
@@ -219,7 +249,8 @@ cp rkt-${RKT_VER}/init/systemd/tmpfiles.d/* /etc/tmpfiles.d
 systemd-tmpfiles --create
 
 CLEANUP_LIST="$CLEANUP_LIST rkt-${RKT_VER}.tar.gz rkt-${RKT_VER}"
-# TODO: do we need to pre-trust keys for things?
+
+# TODO: should we pre-trust keys for things?
 
 # Install /usr/lib/coreos/kubelet-wrapper
 
@@ -234,3 +265,6 @@ CLEANUP_LIST="$CLEANUP_LIST kubelet-wrapper"
 
 # Clean up
 rm -rf $CLEANUP_LIST
+
+echo "Modification complete."
+

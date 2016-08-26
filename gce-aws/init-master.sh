@@ -7,6 +7,8 @@ CLUSTER_DIR=${CLUSTER_DIR:-cluster}
 IDENT=${IDENT:-${HOME}/.ssh/id_rsa}
 
 COREOS_ENV_FILE=${COREOS_ENV_FILE:-/var/coreos/metadata}
+ETCD_DROPIN_FILE=10-coreos-k8s-etcd.conf
+SEDSTRING=""
 
 if [ -f $COREOS_ENV_FILE ]; then
   source $COREOS_ENV_FILE
@@ -22,7 +24,7 @@ else
 fi
 
 BOOTKUBE_REPO=quay.io/coreos/bootkube
-BOOTKUBE_VERSION=v0.1.1
+BOOTKUBE_VERSION=v0.1.4
 
 function usage() {
     echo "USAGE:"
@@ -31,7 +33,6 @@ function usage() {
 }
 
 function configure_etcd() {
-ETCD_DROPIN_FILE=10-coreos-k8s-etcd.conf
 
     if [ -f /lib/systemd/system/etcd2.service ]; then
       ETCD_DROPIN_DIR=/etc/systemd/system/etcd2.service.d
@@ -39,6 +40,7 @@ ETCD_DROPIN_FILE=10-coreos-k8s-etcd.conf
     elif [ -f /lib/systemd/system/etcd.service ]; then
       ETCD_DROPIN_DIR=/etc/systemd/system/etcd.service.d
       ETCD_UNIT_FILE="etcd.service"
+      SEDSTRING="s#etcd2.service#etcd.service#;"
     else
       echo "No etcd service installed, terminating."
     fi
@@ -71,8 +73,7 @@ function configure_flannel() {
     [ -f $TEMPLATE ] || {
         mkdir -p $(dirname $TEMPLATE)
         echo "[Service]" >> $TEMPLATE
-        echo "ExecStartPre=/usr/bin/ln -sf /etc/flannel/options.env /run/flannel/options.env" >> $TEMPLATE
-        systemctl daemon-reload
+        echo "ExecStartPre=${LNPATH} -sf /etc/flannel/options.env /run/flannel/options.env" >> $TEMPLATE
     }
 }
 
@@ -88,7 +89,6 @@ function configure_network() {
 
 # Initialize a Master node
 function init_master_node() {
-    systemctl daemon-reload
     if [ "$OS_NAME" = "coreos" ]; then
       systemctl stop update-engine; systemctl mask update-engine
     fi
@@ -96,6 +96,7 @@ function init_master_node() {
     # Start etcd and configure network settings
     configure_etcd
     configure_flannel
+    systemctl daemon-reload
     systemctl enable $ETCD_UNIT_FILE; systemctl start $ETCD_UNIT_FILE
     configure_network
 
@@ -116,7 +117,9 @@ function init_master_node() {
 
     # Set up the kubelet service
 
-    sed "s#{{COREOS_ENV_FILE}}#$COREOS_ENV_FILE#" /home/core/kubelet.master > /etc/systemd/system/kubelet.service
+    SEDSTRING=${SEDSTRING}"s#{{COREOS_ENV_FILE}}#$COREOS_ENV_FILE#"
+
+    sed -e $SEDSTRING /home/core/kubelet.master > /etc/systemd/system/kubelet.service
 
     # Start the kubelet
     systemctl enable kubelet; systemctl start kubelet

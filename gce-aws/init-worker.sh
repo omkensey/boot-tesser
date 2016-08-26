@@ -8,6 +8,19 @@ IDENT=${IDENT:-${HOME}/.ssh/id_rsa}
 
 COREOS_ENV_FILE=${COREOS_ENV_FILE:-/var/coreos/metadata}
 
+if [ -f $COREOS_ENV_FILE ]; then
+  source $COREOS_ENV_FILE
+fi
+
+if [ -f /etc/os-release ]; then
+  source /etc/os-release
+  OS_NAME=$ID
+  OS_VER_MAJOR=${VERSION_ID%.*}
+else
+  echo "Your distribution does not have an /etc/os-release file, which means it's unsupported for Kubernetes self-hosted install."
+  exit 1
+fi
+
 function usage() {
     echo "USAGE:"
     echo "$0: <remote-host> <kube-config>"
@@ -33,7 +46,7 @@ function configure_flannel() {
         echo "[Service]" >> $TEMPLATE
         echo "EnvironmentFile=-/etc/sysconfig/flanneld" >> $TEMPLATE
         echo "EnvironmentFile=/etc/flannel/options.env" >> $TEMPLATE
-        echo "ExecStartPre=/usr/bin/ln -sf /etc/flannel/options.env /run/flannel/options.env" >> $TEMPLATE
+        echo "ExecStartPre=${LNPATH} -sf /etc/flannel/options.env /run/flannel/options.env" >> $TEMPLATE
         echo "ExecStart=" >> $TEMPLATE
         echo 'ExecStart=/usr/bin/flanneld $FLANNEL_OPTIONS' >> $TEMPLATE
         /bin/true
@@ -67,7 +80,9 @@ function init_worker_node() {
 
     # Start services
     systemctl daemon-reload
-    # systemctl stop update-engine; systemctl mask update-engine
+    if [ "$OS_NAME" = "coreos" ]; then
+      systemctl stop update-engine; systemctl mask update-engine
+    fi
     systemctl enable flanneld; systemctl start flanneld
     systemctl enable kubelet; systemctl start kubelet
 }
