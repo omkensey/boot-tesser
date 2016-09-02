@@ -203,11 +203,19 @@ if ! $(id core > /dev/null); then
   useradd -m core
 fi
 
-# If the core user has no SSH authorized_keys, copy root's if it exists
+# If the user has no .ssh directory, create it
+
+if ! [ -d ~core/.ssh ]; then
+  sudo -u core mkdir -p ~core/.ssh
+  sudo -u core chmod go-rwx ~core/.ssh
+fi
+
+# If the core user has no SSH authorized_keys, copy ours if it exists
 
 if ! [ -f ~core/.ssh/authorized_keys ]; then
-  if [ -f ~root/.ssh/authorized_keys ]; then
-    cp ~root/.ssh/authorized_keys ~core/.ssh/authorized_keys
+  if [ -f ~/.ssh/authorized_keys ]; then
+    cat ~/.ssh/authorized_keys | sudo -u core sh -c "cat - >> ~core/.ssh/authorized_keys"
+    sudo -u core chmod go-rwx ~core/.ssh/authorized_keys
   fi
 fi
 
