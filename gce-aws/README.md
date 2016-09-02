@@ -6,6 +6,8 @@ The idea is to carry out enough modifications to a non-CoreOS host to allow it t
 
 ## Execution
 
+For usage details, see the [main README for this repository](../README.md).
+
 The preparation steps undertaken consist of the following:
 
 ### Identify the system

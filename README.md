@@ -84,3 +84,5 @@ Eventually you should see a message that bootstrap is complete with instructions
 Eventually you should see a message that worker bootstrap is complete.  It may take a few seconds to a few minutes for the node to become Ready.
 
 #### Repeat the previous step for each worker node target.
+
+For details on the prep script and the changes to the master and worker initialization scripts, see the [README for the GCE/AWS quickstart](gce-aws/README.md).
