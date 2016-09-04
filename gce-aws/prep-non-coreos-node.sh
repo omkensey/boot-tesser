@@ -126,6 +126,13 @@ if systemctl status etcd > /dev/null; then
   systemctl stop etcd && systemctl disable etcd
 fi
 
+# Ubuntu also auto-starts docker on package install.  We stop but don't 
+# disable.
+
+if systemctl status docker > /dev/null; then
+  systemctl stop docker
+fi
+
 # Red Hat changes the default flannel network config prefix, so if we 
 # detect that, we change it back to keep cross-distro compatibility
 
@@ -138,6 +145,7 @@ if [ "$MANUAL_FLANNEL" -eq "1" ]; then
   # no flannel .debs we trust out there
   FLANNEL_VER="0.5.5"
   FLANNEL_RELEASE_URL="https://github.com/coreos/flannel/releases/download/v${FLANNEL_VER}/flannel-${FLANNEL_VER}-linux-amd64.tar.gz"
+
   FLANNEL_UNIT="[Unit]
 Description=Network fabric for containers
 Documentation=https://github.com/coreos/flannel
@@ -152,15 +160,24 @@ Environment=\"TMPDIR=/var/tmp/\"
 EnvironmentFile=-/run/flannel/options.env
 ExecStartPre=/bin/mkdir -p /run/flannel
 ExecStart=/usr/bin/flanneld
+ExecStartPost=/usr/bin/mk-docker-opts.sh -d /run/flannel/flannel_docker_opts.env -c
 
 [Install]
 WantedBy=multi-user.target"
 
+  FLANNEL_DOCKER_OPTS_DROPIN="[Service]
+EnvironmentFile=-/run/flannel/flannel_docker_opts.env"
+
   curl -ss -L $FLANNEL_RELEASE_URL > flannel-${FLANNEL_VER}-linux-amd64.tar.gz
   tar zxvf flannel-${FLANNEL_VER}-linux-amd64.tar.gz
   cp flannel-${FLANNEL_VER}/flanneld /usr/local/bin
+  cp flannel-${FLANNEL_VER}/mk-docker-opts.sh /usr/local/bin
   $LNPATH -sf /usr/local/bin/flanneld /usr/bin
+  $LNPATH -sf /usr/local/bin/mk-docker-opts.sh /usr/bin
   echo "$FLANNEL_UNIT" > /etc/systemd/system/flanneld.service
+  mkdir -p /etc/systemd/system/docker.service.d
+  echo "$FLANNEL_DOCKER_OPTS_DROPIN" > /etc/systemd/system/docker.service.d/10-flannel-opts.conf
+  systemctl daemon-reload
   CLEANUP_LIST="$CLEANUP_LIST flannel-${FLANNEL_VER}-linux-amd64.tar.gz flannel-${FLANNEL_VER}"
 fi
 
