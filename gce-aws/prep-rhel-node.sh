@@ -15,7 +15,7 @@
 
 # * SSH to all hosts from management hosts
 # * 2379 to all etcd hosts from Kubernetes hosts and any other hosts 
-    running etcd proxies
+#   running etcd proxies
 # * 2380 to all etcd hosts from all other etcd peers
 # * 443 to all Kubernetes masters from all Kubernetes and management 
 #   hosts
@@ -42,6 +42,10 @@ COREOS_ENV_FILE=${COREOS_ENV_FILE:-/var/coreos/metadata}
 COREOS_ENV_DIR=$(dirname $COREOS_ENV_FILE)
 BOOTKUBE_ENV_FILE=${BOOTKUBE_ENV_FILE:-${COREOS_ENV_DIR}/metadata-bootkube.conf}
 
+RKT_VER="v1.9.1"
+RKT_USER="core"
+RKT_S1_DIR="/usr/lib/rkt/stage1-images"
+RKT_RELEASE_URL="https://github.com/coreos/rkt/releases/download/${RKT_VER}/rkt-${RKT_VER}.tar.gz"
 
 # Are we on RHEL 7, CoreOS or something unsupported?
 
@@ -63,7 +67,7 @@ case $OS_NAME in
       echo "install."
       exit 1
     else
-      PKG_INSTALL="yum install"
+      PKG_INSTALL="yum install -y -q"
       PKG_LIST="docker etcd flannel https://dl.fedoraproject.org/pub/epel/7/x86_64/j/jq-1.5-1.el7.x86_64.rpm https://dl.fedoraproject.org/pub/epel/7/x86_64/o/oniguruma-5.9.5-3.el7.x86_64.rpm"
       rpm --import http://download.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-7
       # Persistently set SELinux to non-enforcing
@@ -75,13 +79,14 @@ case $OS_NAME in
     ;;
   coreos)
     if [ "$OS_VER_MAJOR" -lt "962" ]; then
-      echo "Your version of CoreOS is not supported for Kubernetes 
+      echo "Your version of CoreOS is not supported for Kubernetes" 
       echo "self-hosted install."
       exit 1
     else
       echo "You don't need to run this script against a version of CoreOS"
       echo "that's supported for self-install."
       exit 0
+    fi
     ;;
   *)
     echo "Your distribution is not supported for Kubernetes self-hosted install."
@@ -101,8 +106,8 @@ else
     source $BOOTKUBE_ENV_FILE
   else
     echo "Your cloud provider, if any, is not (yet) supported by this script."
-    echo "If you would like to use this script anyway, create the file 
-    echo "$BOOTKUBE_ENV_FILE with variable declarations in it for 
+    echo "If you would like to use this script anyway, create the file"
+    echo "$BOOTKUBE_ENV_FILE with variable declarations in it for"
     echo "COREOS_PUBLIC_IPV4 and COREOS_PRIVATE_IPV4."
     exit 1
   fi
@@ -117,7 +122,6 @@ case $COREOS_OEM in
     COREOS_PUBLIC_IPV4=$(curl -ss http://169.254.169.254/latest/meta-data/public-ipv4)
     COREOS_PRIVATE_IPV4=$(curl -ss http://169.254.169.254/latest/meta-data/local-ipv4)
     ;;
-
 esac
 
 # Write out metadata for the self-install script to use
@@ -131,14 +135,14 @@ cat $COREOS_ENV_DIR/metadata-*.conf > $COREOS_ENV_FILE
 
 # Install etcd, docker, flannel and jq
 
-$PKG_INSTALL -y $PKG_LIST
+$PKG_INSTALL $PKG_LIST
 
 # Red Hat changes the default flannel network config prefix, so if we 
 # detect that, we change it back to keep cross-distro compatibility
 
 if [ -f /etc/sysconfig/flanneld ]; then
   sed -i.bak -e 's/FLANNEL_ETCD_KEY=\"\/atomic.io\/network\"/FLANNEL_ETCD_KEY=\"\/coreos.com\/network\"/' /etc/sysconfig/flanneld
-  echo "Edited flannel network config to use ${FLANNEL_ETCD_KEY}."
+  echo "Edited flannel network config to use /coreos.com/network."
 fi
 
 # Some basic user setup:
@@ -174,7 +178,7 @@ fi
 if ! $(sudo -l -U core | grep -q "NOPASSWD: ALL"); then
   if [ -d /etc/sudoers.d ]; then 
     if [ -f /etc/sudoers.d/core]; then
-      echo "sudoers file snippet fore 'core' user already exists; not 
+      echo "sudoers file snippet fore 'core' user already exists; not"
       echo "changing."
     else
       echo "core ALL=NOPASSWD: ALL" >> /etc/sudoers.d/core
@@ -190,11 +194,6 @@ else
 fi
 
 # Install rkt
-
-export RKT_VER="v1.9.1"
-export RKT_USER="core"
-export RKT_S1_DIR="/usr/lib/rkt/stage1-images"
-export RKT_RELEASE_URL="https://github.com/coreos/rkt/releases/download/${RKT_VER}/rkt-${RKT_VER}.tar.gz"
 
 groupadd rkt
 groupadd rkt-admin
@@ -241,5 +240,4 @@ echo "Installed kubelet-wrapper."
 rm -rf $CLEANUP_LIST
 echo "Cleaned up: "$CLEANUP_LIST
 
-echo "Modification complete."
-
+echo "Prep complete."
